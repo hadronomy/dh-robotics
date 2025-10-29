@@ -1,0 +1,13 @@
+[project]
+name = "robotics"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "matplotlib",
+    "numpy",
+    "streamlit",
+    "pandas",
+    "streamlit-javascript>=0.1.5",
+]
