@@ -5,7 +5,7 @@ from math import cos, sin, tan, pi, e, radians, degrees
 from typing import Dict, List, Optional, Tuple
 import ast
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 
 import numpy as np
 import matplotlib
@@ -64,8 +64,6 @@ def safe_eval(expr: str, names: Dict[str, float]) -> float:
             if isinstance(n.value, (int, float)):
                 return float(n.value)
             raise SafeEvalError("Only numeric constants are allowed.")
-        if isinstance(n, ast.Num):
-            return float(n.n)
         if isinstance(n, ast.Name):
             if n.id in names:
                 return float(names[n.id])
@@ -385,7 +383,7 @@ def pack_config(
     config = {
         "meta": {
             "version": 2,
-            "saved_at": datetime.utcnow().isoformat() + "Z",
+            "saved_at": datetime.now(UTC).isoformat(),
         },
         "n": int(n),
         "dh": dh_dict,
@@ -646,7 +644,7 @@ with st.sidebar:
     
     var_df_edit = st.data_editor(
         st.session_state.var_df,
-        use_container_width=True,
+        width="stretch",
         num_rows="dynamic",
         key="vars_editor",
         hide_index=True,
@@ -702,7 +700,7 @@ with st.sidebar:
         data=config_json,
         file_name=f"robot_dh_config_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
         mime="application/json",
-        use_container_width=True,
+        width="stretch",
     )
 
     uploaded = st.file_uploader(
@@ -741,7 +739,7 @@ with st.sidebar:
     
     cols_p = st.columns([1, 1])
     with cols_p[0]:
-        if st.button("💾 Save preset", use_container_width=True, key="save_preset_btn"):
+        if st.button("💾 Save preset", width="stretch", key="save_preset_btn"):
             try:
                 entry = {
                     "name": preset_name.strip() or datetime.now().isoformat(),
@@ -759,7 +757,7 @@ with st.sidebar:
                 st.error(f"❌ Error saving preset: {e}")
     
     with cols_p[1]:
-        if st.button("🔄 Refresh", use_container_width=True, key="refresh_presets_btn"):
+        if st.button("🔄 Refresh", width="stretch", key="refresh_presets_btn"):
             st.session_state.presets = load_presets_from_storage()
             st.session_state.presets_loaded = True
             st.success("🔄 Presets refreshed!")
@@ -771,7 +769,7 @@ with st.sidebar:
         
         cols_p2 = st.columns([1, 1])
         with cols_p2[0]:
-            if st.button("📥 Load", use_container_width=True, key="load_preset_btn"):
+            if st.button("📥 Load", width="stretch", key="load_preset_btn"):
                 try:
                     chosen = next(p for p in st.session_state.presets if p.get("name") == sel)
                     shaped = unpack_config(chosen["data"])
@@ -790,7 +788,7 @@ with st.sidebar:
                     st.error(f"❌ Could not load preset: {ex}")
         
         with cols_p2[1]:
-            if st.button("🗑️ Delete", use_container_width=True, key="delete_preset_btn"):
+            if st.button("🗑️ Delete", width="stretch", key="delete_preset_btn"):
                 try:
                     new_presets = [p for p in st.session_state.presets if p.get("name") != sel]
                     if save_presets_to_storage(new_presets):
@@ -820,13 +818,13 @@ with bulk:
         st.caption("Bulk origin actions:")
         c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
         with c1:
-            select_all = st.form_submit_button("✓ Select all", use_container_width=True)
+            select_all = st.form_submit_button("✓ Select all", width="stretch")
         with c2:
-            clear_all = st.form_submit_button("✗ Clear all", use_container_width=True)
+            clear_all = st.form_submit_button("✗ Clear all", width="stretch")
         with c3:
-            invert = st.form_submit_button("⇄ Invert", use_container_width=True)
+            invert = st.form_submit_button("⇄ Invert", width="stretch")
         with c4:
-            st.form_submit_button("Cancel", use_container_width=True)
+            st.form_submit_button("Cancel", width="stretch")
         
         if select_all:
             st.session_state.dh_df["origin"] = True
@@ -843,7 +841,7 @@ parent_options = ["Base"] + [f"J{i}" for i in range(n)]
 current_df = st.data_editor(
     st.session_state.dh_df,
     num_rows="fixed",
-    use_container_width=True,
+    width="stretch",
     key="dh_editor_live",
     hide_index=True,
     column_order=["parent", "origin", "d", "theta_deg", "a", "alpha_deg"],
@@ -921,7 +919,7 @@ for joint_idx, origin_label in sorted(origin_labels.items()):
         })
 
 df_origins = pd.DataFrame(origin_rows, columns=["label", "joint", "parent", "x", "y", "z"])
-st.dataframe(df_origins, use_container_width=True, hide_index=True)
+st.dataframe(df_origins, width="stretch", hide_index=True)
 
 with st.expander("Show all joint positions (J0, J1, J2, ...)"):
     joint_rows = []
@@ -941,7 +939,7 @@ with st.expander("Show all joint positions (J0, J1, J2, ...)"):
                 "z": fmt_vec(p)[2],
             })
     df_all_joints = pd.DataFrame(joint_rows, columns=["joint", "origin", "label", "parent", "x", "y", "z"])
-    st.dataframe(df_all_joints, use_container_width=True, hide_index=True)
+    st.dataframe(df_all_joints, width="stretch", hide_index=True)
 
 st.subheader("End effectors (leaf joints)")
 parents_list = [parse_parent(current_df.loc[i, "parent"]) for i in range(n)]
@@ -961,7 +959,7 @@ if leaf_joints:
                 "z": fmt_vec(p)[2],
             })
     df_ef = pd.DataFrame(ef_rows, columns=["joint", "origin_label", "x", "y", "z"])
-    st.dataframe(df_ef, use_container_width=True, hide_index=True)
+    st.dataframe(df_ef, width="stretch", hide_index=True)
 else:
     st.info("No leaf joints found.")
 
