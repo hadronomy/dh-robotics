@@ -802,7 +802,7 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"❌ Error deleting preset: {e}")
     else:
-        st.info("ℹ️ No presets saved yet. Save your first preset above!", icon="ℹ️")
+        st.info("No presets saved yet. Save your first preset above!", icon="ℹ")
 
 if st.session_state.dh_df is None:
     st.session_state.dh_df = ensure_dh_df(None, n)
@@ -811,7 +811,7 @@ st.info(
     "**Parent column**: Specify where each joint connects to. Use 'Base' for base connection, "
     "'J0' for joint 0, 'J1' for joint 1, etc. This allows creating tree structures with branches. "
     "**Origin checkbox**: Only joints with 'origin' checked will be labeled as O1, O2, O3, etc. in the visualization.",
-    icon="ℹ️"
+    icon="ℹ"
 )
 
 bulk = st.container()
