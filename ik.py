@@ -21,6 +21,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import typer
+from matplotlib.widgets import Button, Slider
 
 app = typer.Typer(add_completion=False)
 
@@ -60,6 +61,7 @@ class CCDResult:
     distance: float
     iterations: int
     converged: bool
+    history: Optional[List[np.ndarray]] = None
 
 
 @dataclass
@@ -189,7 +191,8 @@ def load_robot_config(path: str) -> RobotConfig:
         t = str(j["type"]).upper()
         if t not in ("R", "P"):
             raise ValueError(
-                f"En joint {j_idx}, 'type' debe ser 'R' o 'P', se recibió {t!r}."
+                f"En joint {j_idx}, 'type' debe ser 'R' o 'P', "
+                f"se recibió {t!r}."
             )
 
         # Longitud base L
@@ -311,43 +314,176 @@ def cumulative_angles(th: Sequence[float]) -> List[float]:
 
 
 class Animator:
-    def __init__(
-        self, n_links: int, L_total: float, target: Tuple[float, float]
-    ) -> None:
-        self.n_links = n_links
-        self.target = np.asarray(target, dtype=float)
+    """Visor interactivo con slider, reproducción y onion skin.
 
+    - Slider: moverse a cualquier iteración.
+    - Botones: anterior, siguiente, play/pause.
+    - Onion skin: muestra varias posiciones pasadas con transparencia.
+    """
+
+    def __init__(
+        self,
+        frames: Sequence[np.ndarray],
+        target: Tuple[float, float],
+        frame_dt: float = 1.0 / 24.0,
+        onion_depth: int = 5,
+    ) -> None:
+        if not frames:
+            raise ValueError("Animator necesita al menos un frame.")
+
+        self.frames = list(frames)
+        self.n_frames = len(self.frames)
+        self.idx = 0
+        self.playing = False
+        self.frame_dt = frame_dt
+        self.onion_depth = max(0, int(onion_depth))
+
+        # Figura y ejes
         self.fig, self.ax = plt.subplots()
-        lim = max(1.0, L_total) * 1.1
+
+        pts0 = self.frames[0]
+        n_links = pts0.shape[0] - 1
+
+        # Escala del dibujo a partir de todos los puntos
+        all_pts = np.concatenate(self.frames, axis=0)
+        r_max = float(np.max(np.linalg.norm(all_pts, axis=1)))
+        lim = max(1.0, r_max) * 1.1
         self.ax.set_xlim(-lim, lim)
         self.ax.set_ylim(-lim, lim)
         self.ax.set_aspect("equal", adjustable="box")
         self.ax.grid(True, linestyle=":", alpha=0.4)
-        self.ax.set_title("CCD 2D (R y P)")
+        self.ax.set_title("CCD 2D – reproducción interactiva")
 
+        # Segmentos de cada eslabón (frame actual)
         self.lines = []
+        self.colors = []
         for i in range(n_links):
             color = cs.hsv_to_rgb(i / max(1.0, float(n_links)), 1.0, 1.0)
-            (line,) = self.ax.plot([], [], "-o", color=color, linewidth=2.0)
+            self.colors.append(color)
+            (line,) = self.ax.plot(
+                [],
+                [],
+                "-o",
+                color=color,
+                linewidth=2.0,
+            )
             self.lines.append(line)
 
+        # Objetivo
         (self.target_artist,) = self.ax.plot(
-            [self.target[0]], [self.target[1]], marker="*", color="k", ms=12
+            [target[0]],
+            [target[1]],
+            marker="*",
+            color="k",
+            ms=12,
         )
 
-        plt.ion()
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
+        # Contendrá las líneas fantasma (onion skin)
+        self.ghost_lines: List[plt.Line2D] = []
 
-    def update(self, points: np.ndarray) -> None:
+        # Widgets: slider + botones
+        ax_slider = self.fig.add_axes([0.15, 0.02, 0.7, 0.03])
+        self.slider = Slider(
+            ax_slider,
+            "iter",
+            0,
+            self.n_frames - 1,
+            valinit=0,
+            valfmt="%0.0f",
+        )
+        self.slider.on_changed(self.on_slider)
+
+        ax_prev = self.fig.add_axes([0.15, 0.07, 0.08, 0.04])
+        ax_play = self.fig.add_axes([0.27, 0.07, 0.08, 0.04])
+        ax_next = self.fig.add_axes([0.39, 0.07, 0.08, 0.04])
+
+        self.btn_prev = Button(ax_prev, "<<")
+        self.btn_play = Button(ax_play, "Play")
+        self.btn_next = Button(ax_next, ">>")
+
+        self.btn_prev.on_clicked(self.on_prev)
+        self.btn_next.on_clicked(self.on_next)
+        self.btn_play.on_clicked(self.on_play_pause)
+
+        # Timer para animación continua
+        self.timer = self.fig.canvas.new_timer(
+            interval=int(self.frame_dt * 1000.0)
+        )
+        self.timer.add_callback(self._on_timer)
+
+        # Dibuja primer frame
+        self._draw_frame(0)
+
+    def _draw_frame(self, idx: int) -> None:
+        pts = self.frames[idx]
+
+        # Dibuja frame actual
         for i, line in enumerate(self.lines):
-            seg = points[i : i + 2]
+            seg = pts[i : i + 2]
             line.set_data(seg[:, 0], seg[:, 1])
-        self.fig.canvas.draw_idle()
-        plt.pause(0.001)
 
-    def close(self) -> None:
-        plt.ioff()
+        # Borra líneas fantasma anteriores
+        for ln in self.ghost_lines:
+            ln.remove()
+        self.ghost_lines.clear()
+
+        # Onion skin: frames anteriores con transparencia
+        if self.onion_depth > 0:
+            n_links = len(self.lines)
+            max_alpha = 0.35  # opacidad máxima para el frame más reciente
+            for j in range(1, self.onion_depth + 1):
+                idx_ghost = idx - j
+                if idx_ghost < 0:
+                    break
+                pts_g = self.frames[idx_ghost]
+                # Atenuación progresiva
+                fade = (self.onion_depth + 1 - j) / (self.onion_depth + 1)
+                alpha = max_alpha * fade
+                for i in range(n_links):
+                    seg = pts_g[i : i + 2]
+                    base = self.colors[i]
+                    rgba = (base[0], base[1], base[2], alpha)
+                    (ghost_line,) = self.ax.plot(
+                        seg[:, 0],
+                        seg[:, 1],
+                        "-o",
+                        color=rgba,
+                        linewidth=1.0,
+                        markersize=3,
+                    )
+                    self.ghost_lines.append(ghost_line)
+
+        self.fig.canvas.draw_idle()
+
+    def on_slider(self, val: float) -> None:
+        self.idx = int(round(val))
+        self._draw_frame(self.idx)
+
+    def on_prev(self, event) -> None:
+        self.idx = (self.idx - 1) % self.n_frames
+        self.slider.set_val(self.idx)
+
+    def on_next(self, event) -> None:
+        self.idx = (self.idx + 1) % self.n_frames
+        self.slider.set_val(self.idx)
+
+    def on_play_pause(self, event) -> None:
+        self.playing = not self.playing
+        self.btn_play.label.set_text("Pause" if self.playing else "Play")
+        if self.playing:
+            self.timer.start()
+        else:
+            self.timer.stop()
+        self.fig.canvas.draw_idle()
+
+    def _on_timer(self) -> None:
+        if not self.playing:
+            return
+        self.idx = (self.idx + 1) % self.n_frames
+        # Actualizar slider dispara on_slider -> _draw_frame
+        self.slider.set_val(self.idx)
+
+    def show(self) -> None:
         plt.show()
 
 
@@ -402,14 +538,14 @@ def ccd(
         else:
             s[i] = limits[i].clamp(s[i])
 
-    L_total = sum(a_base) + sum(
-        max(0.0, si) for si, t in zip(s, types) if t == "P"
-    )
-    animator = Animator(n, L_total=L_total, target=(tgt[0], tgt[1])) if animate else None
-
     a_eff = effective_lengths(types, a_base, s)
     points = forward_kinematics(th, a_eff)
     dist = float(np.linalg.norm(points[-1] - tgt))
+
+    # Historial de frames para animación interactiva
+    history: List[np.ndarray] = []
+    if animate:
+        history.append(points.copy())
 
     if verbose:
         print("- Posición inicial:")
@@ -433,7 +569,10 @@ def ccd(
             v_tgt = tgt - joint
 
             if types[i] == "R":
-                if np.linalg.norm(v_eff) < 1e-12 or np.linalg.norm(v_tgt) < 1e-12:
+                if (
+                    np.linalg.norm(v_eff) < 1e-12
+                    or np.linalg.norm(v_tgt) < 1e-12
+                ):
                     continue
                 delta = angle_between(v_eff, v_tgt)
                 delta = max(-max_step_theta, min(max_step_theta, delta))
@@ -446,7 +585,10 @@ def ccd(
             else:
                 # Prismática: proyección del error en el eje local de la junta
                 Fi = cumulative_angles(th)[i]
-                u_i = np.array([math.cos(Fi), math.sin(Fi)], dtype=float)
+                u_i = np.array(
+                    [math.cos(Fi), math.sin(Fi)],
+                    dtype=float,
+                )
                 e = tgt - eff
                 delta_s = float(np.dot(u_i, e))
                 delta_s = max(-max_step_lin, min(max_step_lin, delta_s))
@@ -456,14 +598,13 @@ def ccd(
                 elif s[i] > limits[i].hi:
                     s[i] = limits[i].hi
 
-            if animator:
-                a_eff = effective_lengths(types, a_base, s)
-                animator.update(forward_kinematics(th, a_eff))
-
         # Evaluación tras el barrido
         a_eff = effective_lengths(types, a_base, s)
         points = forward_kinematics(th, a_eff)
         dist = float(np.linalg.norm(points[-1] - tgt))
+
+        if animate:
+            history.append(points.copy())
 
         if verbose:
             print(f"\n- Iteración {iter_count}:")
@@ -471,8 +612,6 @@ def ccd(
             print(f"Distancia al objetivo = {dist:.5f}")
 
         if dist <= epsilon:
-            if animator:
-                animator.update(points)
             break
 
         # Criterio de estancamiento con paciencia
@@ -489,9 +628,6 @@ def ccd(
         prev_dist = dist
 
     converged = dist <= epsilon
-    if animator:
-        animator.update(points)
-        animator.close()
 
     # Normaliza ángulos de salida
     th = [wrap_angle(t) for t in th]
@@ -503,6 +639,7 @@ def ccd(
         distance=dist,
         iterations=iter_count,
         converged=converged,
+        history=history if animate else None,
     )
 
 
@@ -532,14 +669,18 @@ def solve(
     limits_text: Optional[str] = typer.Option(
         None,
         "--limits",
-        help="CSV de 'lo:hi' por junta. R: ángulos (rad o grados si --degrees). "
-        "P: extensiones.",
+        help=(
+            "CSV de 'lo:hi' por junta. R: ángulos (rad o grados si --degrees). "
+            "P: extensiones."
+        ),
     ),
     config: Optional[str] = typer.Option(
         None,
         "--config",
-        help="Ruta a archivo TOML con la definición del robot "
-        "(sección [robot]).",
+        help=(
+            "Ruta a archivo TOML con la definición del robot "
+            "(sección [robot])."
+        ),
     ),
     degrees: bool = typer.Option(
         False, "--degrees/--no-degrees", help="Interpretar ángulos en grados"
@@ -549,19 +690,33 @@ def solve(
     max_step_theta: float = typer.Option(
         math.pi, help="Paso angular máximo por junta R (rad)"
     ),
-    max_step_lin: float = typer.Option(1.0, help="Paso lineal máximo por junta P"),
+    max_step_lin: float = typer.Option(
+        100.0, help="Paso lineal máximo por junta P"
+    ),
     damping: float = typer.Option(1.0, help="Factor de amortiguación [0,1]"),
-    animate: bool = typer.Option(False, "--animate/--no-animate", help="Animación"),
-    quiet: bool = typer.Option(False, "--quiet/--verbose", help="Reducir salida"),
+    animate: bool = typer.Option(
+        False, "--animate/--no-animate", help="Animación"
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet/--verbose", help="Reducir salida"
+    ),
     stall_patience: int = typer.Option(
-        1,
+        2,
         help="Barridos sin mejora suficiente antes de parar (0 desactiva).",
     ),
     stall_rel: float = typer.Option(
-        1e-5, help="Mejora relativa mínima por barrido para resetear paciencia."
+        1e-5,
+        help=(
+            "Mejora relativa mínima por barrido para resetear "
+            "paciencia."
+        ),
     ),
     stall_abs: float = typer.Option(
-        1e-8, help="Mejora absoluta mínima por barrido para resetear paciencia."
+        1e-8,
+        help=(
+            "Mejora absoluta mínima por barrido para resetear "
+            "paciencia."
+        ),
     ),
 ) -> None:
     # Lee configuración desde TOML si se especifica
@@ -594,15 +749,16 @@ def solve(
     if lengths_text is None:
         if cfg is None:
             typer.echo(
-                "Debe especificar --lengths o proporcionar un archivo --config "
-                "con 'L' por junta en [[robot.joint]].",
+                "Debe especificar --lengths o proporcionar un archivo "
+                "--config con 'L' por junta en [[robot.joint]].",
                 err=True,
             )
             raise typer.Exit(code=2)
         a_base = cfg.lengths
         if len(a_base) != n:
             typer.echo(
-                "En el TOML, el número de L no coincide con el número de tipos.",
+                "En el TOML, el número de L no coincide con el número "
+                "de tipos.",
                 err=True,
             )
             raise typer.Exit(code=2)
@@ -652,8 +808,8 @@ def solve(
     if limits_text is None:
         if cfg is None:
             typer.echo(
-                "Debe especificar --limits o proporcionar un archivo --config "
-                "con 'limits' por junta en [[robot.joint]].",
+                "Debe especificar --limits o proporcionar un archivo "
+                "--config con 'limits' por junta en [[robot.joint]].",
                 err=True,
             )
             raise typer.Exit(code=2)
@@ -704,11 +860,23 @@ def solve(
             print(f"  theta{i} (R) = {t:.3f} rad  ({deg:.2f} deg)")
         else:
             print(f"  theta{i} (P, orient.) = {t:.3f} rad  ({deg:.2f} deg)")
-    for i, (tp, si, a0) in enumerate(zip(types, res.extensions, a_base), start=1):
+    for i, (tp, si, a0) in enumerate(
+        zip(types, res.extensions, a_base), start=1
+    ):
         if tp == "P":
             print(f"  ext{i} (P)   = {si:.3f}   a_eff={a0+si:.3f}")
         else:
             print(f"  L{i} (R)     = {a0:.3f}")
+
+    # Animación interactiva (reproducción hacia delante/atrás + onion skin)
+    if animate and res.history:
+        viewer = Animator(
+            frames=res.history,
+            target=(x, y),
+            frame_dt=1.0 / 20.0,  # ~20 fps
+            onion_depth=8,       # cuántos frames pasados mostrar
+        )
+        viewer.show()
 
 
 if __name__ == "__main__":
