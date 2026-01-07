@@ -5,6 +5,7 @@
 #     "matplotlib",
 #     "numpy",
 #     "typer",
+#     "pyqt6",
 # ]
 # ///
 
@@ -22,9 +23,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import typer
 from matplotlib.widgets import Button, Slider
+from matplotlib import use
 
 app = typer.Typer(add_completion=False)
-
+use('QtAgg')
 
 # --------------------------- Utilidades básicas -------------------------------
 

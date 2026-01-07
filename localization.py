@@ -179,7 +179,7 @@ if __name__ == "__main__":
     V_LINEAL = 0.7
     V_ANGULAR = 140.0
     FPS = 10.0
-    MOSTRAR = False
+    MOSTRAR = True
     HOLONOMICO = 1
     GIROPARADO = 0
     LONGITUD = 0.2

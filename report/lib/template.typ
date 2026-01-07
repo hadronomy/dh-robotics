@@ -1,4 +1,3 @@
-#import "@preview/chic-hdr:0.5.0": *
 #import "@preview/scienceicons:0.1.0": orcid-icon
 
 #let conf(
@@ -9,6 +8,7 @@
   show-email-section: false,
   date: none,
   accent: none,
+  logo: none,
   abstract: lorem(100),
   spacing: 0.55em,
   first-line-indent: 1.8em,
@@ -24,20 +24,67 @@
     author: if authors != none { authors.map(a => str(a.name)) } else { () },
   )
 
-  set page(
-    margin: 1in,
-    paper: "a4",
-  )
+  let ull-purple = rgb("#5c068c")
 
+  // Use the accent passed or default to ULL Purple
   let accent_color = {
     if type(accent) == str {
       rgb(accent)
     } else if type(accent) == color {
       accent
     } else {
-      rgb("#DC143C")
+      ull-purple
     }
   }
+
+  set page(
+    margin: (top: 3.5cm, bottom: 2.5cm, x: 2.5cm),
+    paper: "a4",
+    header: context {
+      // 1. Get the current page number
+      let i = counter(page).get().first()
+
+      // 2. Only render the header if we are NOT on the first page
+      if i > 1 {
+        let page-num = counter(page).display()
+
+        grid(
+          columns: (1fr, 1fr),
+          gutter: 1em,
+          align(left + bottom)[
+            #if logo != none {
+              set image(height: 0.6cm, fit: "contain")
+              box(baseline: 25%, logo)
+            } else {
+              set text(size: 14pt, weight: "bold", fill: ull-purple)
+              [ULL]
+            }
+            #h(5pt)
+            #set text(size: 7pt, weight: "regular", fill: black, font: "Argentum Sans")
+            #box(baseline: 25%, [
+              Universidad de La Laguna\
+              #set text(size: 5pt)
+              Escuela Superior de Ingeniería y Tecnología
+            ])
+          ],
+          align(right + bottom)[
+            // Hyphenate: false prevents splitting words like "Algorithms",
+            // forcing them to the next line for a more balanced look.
+            #set text(style: "italic", size: 10pt, hyphenate: false)
+            #set par(leading: 0.4em)
+            #title
+          ],
+        )
+        v(-2pt)
+        line(length: 100%, stroke: 0.8pt + ull-purple)
+        v(1pt)
+        align(right)[
+          #text(size: 8pt)[Grado en Ingeniería Informática #h(5pt) #page-num]
+        ]
+      }
+    },
+    footer: none,
+  )
 
   set par(
     leading: 0.55em,
@@ -53,21 +100,6 @@
 
   show raw: set text(font: "Maple Mono NF")
   show heading: set block(above: 2em, below: 1.4em)
-
-  // ---------------------------------------------------------------------------
-  // Header / footer via chic-hdr
-  // ---------------------------------------------------------------------------
-
-  show: chic.with(
-    skip: 1,
-    chic-header(
-      center-side: [
-        #text(size: 8pt)[#upper(title)]
-      ],
-    ),
-    chic-separator(1pt),
-    chic-height(10em),
-  )
 
   // ---------------------------------------------------------------------------
   // Authors, affiliations, abstract metadata
@@ -149,24 +181,6 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Page numbering (odd/even in footer)
-  // ---------------------------------------------------------------------------
-
-  set text(size: 8pt)
-
-  set page(
-    footer: context {
-      let page-counter = counter(page)
-      let number = page-counter.get()
-      if calc.odd(number.first()) {
-        align(right, page-counter.display())
-      } else {
-        align(left, page-counter.display())
-      }
-    },
-  )
-
-  // ---------------------------------------------------------------------------
   // Title block & first-page layout
   // ---------------------------------------------------------------------------
 
@@ -232,10 +246,10 @@
         // Corresponding author mark / footnote
         if corresponding_authors.contains(a) and idx == first_corresponding_idx {
           parts.push(footnote(numbering: _ => "*")[
-            Autor(a/es) de correspondencia:
+            Corresponding author:
             #h(4pt)
             #(
-              corresponding_authors.map(b => [#b.name "#b.email"]).join(", ", last: " y ")
+              corresponding_authors.map(b => [#b.name "#b.email"]).join(", ", last: " and ")
             )
             .
           ])
@@ -246,8 +260,8 @@
         // Equal-contributor mark / footnote
         if equal_authors.len() > 1 and equal_authors.contains(a) and idx == first_equal_idx {
           parts.push(footnote(numbering: _ => "†")[
-            #equal_authors.map(b => b.name).join(", ", last: " y ")
-            contribuyeron de manera equivalente a este trabajo.
+            #equal_authors.map(b => b.name).join(", ", last: " and ")
+            contributed equally to this work.
           ])
         } else if equal_authors.len() > 1 and equal_authors.contains(a) {
           parts.push(super("†"))
@@ -262,7 +276,7 @@
 
         parts.join()
       })
-      .join(", ", last: " y ")
+      .join(", ", last: " and ")
 
     if authornote != none {
       result + footnote_non_numbered(authornote)
